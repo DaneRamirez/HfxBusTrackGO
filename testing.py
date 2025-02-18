@@ -1,5 +1,8 @@
 import requests
 import gtfs_realtime_pb2
+#This file was for testing purposes.
+#This was to experiment with the .pb file before moving to the project.
+
 
 # Fetch the .pb data
 url = 'https://gtfs.halifax.ca/realtime/Vehicle/VehiclePositions.pb'
