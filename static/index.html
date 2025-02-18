@@ -14,7 +14,7 @@
             position: fixed;
             top: 50px;
             left: 10px;
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.95);
             padding: 15px;
             border-radius: 8px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.3);
@@ -25,34 +25,47 @@
         }
         .category-header {
             cursor: pointer;
-            background: #e3f2fd;
-            padding: 10px;
+            background: #f8f9fa;
+            padding: 8px 12px;
             border-radius: 4px;
-            margin: 5px 0;
+            margin: 4px 0;
             font-weight: 600;
             display: flex;
             align-items: center;
             gap: 8px;
+            border: 1px solid #dee2e6;
+        }
+        .subcategory-header {
+            background: #e9ecef;
+            margin-left: 15px;
+            padding: 6px 10px;
+            font-weight: 500;
         }
         .bus-list {
             display: none;
-            margin: 8px 0 12px 15px;
-            border-left: 2px solid #90caf9;
-            padding-left: 10px;
+            margin: 4px 0 8px 25px;
+            border-left: 2px solid #adb5bd;
+            padding-left: 8px;
         }
         .bus-entry {
-            margin: 6px 0;
+            margin: 4px 0;
             display: flex;
             align-items: center;
             gap: 8px;
         }
         .bus-label {
-            font-size: 14px;
-            font-weight: 500;
+            font-size: 12px;
+            font-weight: 600;
             color: white;
             background: #2196f3;
-            padding: 4px 8px;
-            border-radius: 12px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            border: 1px solid #1976d2;
+            min-width: 28px;
+            height: 18px;
+            line-height: 16px;
+            text-align: center;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
         }
         #burger {
             position: fixed;
@@ -68,20 +81,17 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
         input[type="checkbox"] {
-            transform: scale(1.2);
+            transform: scale(1.1);
             accent-color: #2196f3;
         }
         button {
             background: #2196f3;
             color: white;
             border: none;
-            padding: 8px 16px;
+            padding: 6px 12px;
             border-radius: 4px;
             cursor: pointer;
-            transition: opacity 0.2s;
-        }
-        button:hover {
-            opacity: 0.9;
+            font-size: 14px;
         }
     </style>
 </head>
@@ -92,125 +102,239 @@
 
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
-        var map = L.map('map').setView([44.65, -63.57], 12);
+        const map = L.map('map').setView([44.65, -63.57], 12);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        var allMarkers = {};
-        var categoryVisibility = {};
-        var individualVisibility = {};
-        var routeIdMap = {}; // Maps vehicle_id to route_id
+        let allMarkers = {};
+        let categoryVisibility = {};
+        let individualVisibility = {};
+        let routeIdMap = {};
 
-        function getCategory(routeIdStr) {
-            const num = parseInt(routeIdStr);
+        function getCategory(routeId) {
+            const num = parseInt(routeId);
             if (isNaN(num)) return "Other";
+
+            // Parent categories
+            if (num <= 50) {
+                if (num <= 16) return { parent: "1-50", sub: "1-16" };
+                if (num <= 32) return { parent: "1-50", sub: "17-32" };
+                return { parent: "1-50", sub: "33-50" };
+            }
+            if (num <= 100) {
+                if (num <= 75) return { parent: "51-100", sub: "51-75" };
+                return { parent: "51-100", sub: "76-100" };
+            }
+
+            // 50-number buckets for 100+
             const lower = Math.floor((num - 1) / 50) * 50 + 1;
-            return `${lower}-${lower + 49}`;
+            const upper = lower + 49;
+            return { parent: `${lower}-${upper}`, sub: null };
         }
 
         function updateControlPanel() {
             const panel = document.getElementById("control-panel");
             panel.innerHTML = "";
 
-            Object.keys(allMarkers).sort().forEach(category => {
-                const categoryContainer = document.createElement("div");
+            // Sort categories numerically
+            const sortedCategories = Object.keys(allMarkers).sort((a, b) => {
+                const numA = parseInt(a.split('-')[0]);
+                const numB = parseInt(b.split('-')[0]);
+                return numA - numB;
+            });
+
+            sortedCategories.forEach(category => {
+                const isParentCategory = ["1-50", "51-100"].includes(category);
+                const container = document.createElement("div");
+
+                // Category header
                 const header = document.createElement("div");
                 header.className = "category-header";
 
-                const categoryCheckbox = document.createElement("input");
-                categoryCheckbox.type = "checkbox";
-                categoryCheckbox.checked = categoryVisibility[category] !== false;
+                const checkbox = document.createElement("input");
+                checkbox.type = "checkbox";
+                checkbox.checked = categoryVisibility[category] !== false;
 
-                categoryCheckbox.addEventListener("change", function() {
-                    const visible = this.checked;
+                checkbox.addEventListener("change", () => {
+                    const visible = checkbox.checked;
                     categoryVisibility[category] = visible;
-                    Object.keys(allMarkers[category]).forEach(busId => {
-                        individualVisibility[busId] = visible;
-                        const marker = allMarkers[category][busId].marker;
-                        visible ? map.addLayer(marker) : map.removeLayer(marker);
-                    });
+                    if (isParentCategory) {
+                        Object.keys(allMarkers[category]).forEach(sub => {
+                            Object.keys(allMarkers[category][sub]).forEach(busId => {
+                                individualVisibility[busId] = visible;
+                                const marker = allMarkers[category][sub][busId].marker;
+                                visible ? map.addLayer(marker) : map.removeLayer(marker);
+                            });
+                        });
+                    } else {
+                        Object.keys(allMarkers[category]).forEach(busId => {
+                            individualVisibility[busId] = visible;
+                            const marker = allMarkers[category][busId].marker;
+                            visible ? map.addLayer(marker) : map.removeLayer(marker);
+                        });
+                    }
                     updateControlPanel();
                 });
 
-                header.append(categoryCheckbox, `Routes ${category}`);
+                header.append(checkbox, `Routes ${category}`);
 
-                header.addEventListener("click", e => {
-                    if (e.target.tagName !== "INPUT") {
-                        const list = header.nextElementSibling;
-                        list.style.display = list.style.display === "block" ? "none" : "block";
-                    }
-                });
-
-                const busList = document.createElement("div");
-                busList.className = "bus-list";
-
-                Object.keys(allMarkers[category]).sort().forEach(busId => {
-                    const busContainer = document.createElement("div");
-                    busContainer.className = "bus-entry";
-                    const routeId = routeIdMap[busId] || 'N/A';
-
-                    const busCheckbox = document.createElement("input");
-                    busCheckbox.type = "checkbox";
-                    busCheckbox.checked = individualVisibility[busId] !== false;
-                    busCheckbox.addEventListener("change", function() {
-                        individualVisibility[busId] = this.checked;
-                        const marker = allMarkers[category][busId].marker;
-                        this.checked ? map.addLayer(marker) : map.removeLayer(marker);
+                if (isParentCategory) {
+                    header.addEventListener("click", e => {
+                        if (e.target.tagName !== "INPUT") {
+                            const list = header.nextElementSibling;
+                            list.style.display = list.style.display === "block" ? "none" : "block";
+                        }
                     });
+                }
 
-                    busContainer.append(
-                        busCheckbox,
-                        document.createElement("span").textContent = `Route ${routeId}`
+                const content = document.createElement("div");
+                content.className = "bus-list";
+
+                if (isParentCategory) {
+                    // Add subcategories
+                    const subCategories = Object.keys(allMarkers[category]).sort((a, b) =>
+                        parseInt(a.split('-')[0]) - parseInt(b.split('-')[0])
                     );
-                    busList.appendChild(busContainer);
-                });
 
-                categoryContainer.append(header, busList);
-                panel.appendChild(categoryContainer);
+                    subCategories.forEach(sub => {
+                        const subHeader = document.createElement("div");
+                        subHeader.className = "subcategory-header";
+
+                        const subCheckbox = document.createElement("input");
+                        subCheckbox.type = "checkbox";
+                        subCheckbox.checked = Object.keys(allMarkers[category][sub]).some(
+                            busId => individualVisibility[busId] !== false
+                        );
+
+                        subCheckbox.addEventListener("change", () => {
+                            const visible = subCheckbox.checked;
+                            Object.keys(allMarkers[category][sub]).forEach(busId => {
+                                individualVisibility[busId] = visible;
+                                const marker = allMarkers[category][sub][busId].marker;
+                                visible ? map.addLayer(marker) : map.removeLayer(marker);
+                            });
+                            updateControlPanel();
+                        });
+
+                        subHeader.append(subCheckbox, `Routes ${sub}`);
+
+                        const busList = document.createElement("div");
+                        busList.className = "bus-list";
+
+                        Object.keys(allMarkers[category][sub]).sort((a, b) =>
+                            parseInt(routeIdMap[a]) - parseInt(routeIdMap[b])
+                        ).forEach(busId => {
+                            const busEntry = document.createElement("div");
+                            busEntry.className = "bus-entry";
+
+                            const busCheckbox = document.createElement("input");
+                            busCheckbox.type = "checkbox";
+                            busCheckbox.checked = individualVisibility[busId] !== false;
+                            busCheckbox.addEventListener("change", () => {
+                                individualVisibility[busId] = busCheckbox.checked;
+                                const marker = allMarkers[category][sub][busId].marker;
+                                busCheckbox.checked ? map.addLayer(marker) : map.removeLayer(marker);
+                            });
+
+                            busEntry.append(
+                                busCheckbox,
+                                `Route ${routeIdMap[busId] || 'N/A'}`
+                            );
+                            busList.appendChild(busEntry);
+                        });
+
+                        content.append(subHeader, busList);
+                    });
+                } else {
+                    // Direct buses for non-parent categories
+                    Object.keys(allMarkers[category]).sort((a, b) =>
+                        parseInt(routeIdMap[a]) - parseInt(routeIdMap[b])
+                    ).forEach(busId => {
+                        const busEntry = document.createElement("div");
+                        busEntry.className = "bus-entry";
+
+                        const busCheckbox = document.createElement("input");
+                        busCheckbox.type = "checkbox";
+                        busCheckbox.checked = individualVisibility[busId] !== false;
+                        busCheckbox.addEventListener("change", () => {
+                            individualVisibility[busId] = busCheckbox.checked;
+                            const marker = allMarkers[category][busId].marker;
+                            busCheckbox.checked ? map.addLayer(marker) : map.removeLayer(marker);
+                        });
+
+                        busEntry.append(
+                            busCheckbox,
+                            `Route ${routeIdMap[busId] || 'N/A'}`
+                        );
+                        content.appendChild(busEntry);
+                    });
+                }
+
+                container.append(header, content);
+                panel.appendChild(container);
             });
 
-            // Add control buttons
+            // Control buttons
             const btnContainer = document.createElement("div");
             btnContainer.style.marginTop = "15px";
             btnContainer.style.display = "flex";
             btnContainer.style.gap = "8px";
 
-            const createButton = (text, action) => {
-                const btn = document.createElement("button");
-                btn.textContent = text;
-                btn.onclick = action;
-                return btn;
-            };
-
-            btnContainer.append(
-                createButton("Show All", () => {
-                    Object.keys(allMarkers).forEach(category => {
-                        categoryVisibility[category] = true;
-                        Object.keys(allMarkers[category]).forEach(busId => {
-                            individualVisibility[busId] = true;
-                            map.addLayer(allMarkers[category][busId].marker);
-                        });
-                    });
-                    updateControlPanel();
-                }),
-                createButton("Hide All", () => {
-                    Object.keys(allMarkers).forEach(category => {
-                        categoryVisibility[category] = false;
-                        Object.keys(allMarkers[category]).forEach(busId => {
-                            individualVisibility[busId] = false;
-                            map.removeLayer(allMarkers[category][busId].marker);
-                        });
-                    });
-                    updateControlPanel();
-                })
-            );
+            btnContainer.innerHTML = `
+                <button onclick="showAll()">Show All</button>
+                <button onclick="hideAll()">Hide All</button>
+            `;
 
             panel.appendChild(btnContainer);
         }
 
+        function showAll() {
+            Object.keys(allMarkers).forEach(cat => {
+                categoryVisibility[cat] = true;
+                if (["1-50", "51-100"].includes(cat)) {
+                    Object.keys(allMarkers[cat]).forEach(sub => {
+                        Object.keys(allMarkers[cat][sub]).forEach(busId => {
+                            individualVisibility[busId] = true;
+                            map.addLayer(allMarkers[cat][sub][busId].marker);
+                        });
+                    });
+                } else {
+                    Object.keys(allMarkers[cat]).forEach(busId => {
+                        individualVisibility[busId] = true;
+                        map.addLayer(allMarkers[cat][busId].marker);
+                    });
+                }
+            });
+            updateControlPanel();
+        }
+
+        function hideAll() {
+            Object.keys(allMarkers).forEach(cat => {
+                categoryVisibility[cat] = false;
+                if (["1-50", "51-100"].includes(cat)) {
+                    Object.keys(allMarkers[cat]).forEach(sub => {
+                        Object.keys(allMarkers[cat][sub]).forEach(busId => {
+                            individualVisibility[busId] = false;
+                            map.removeLayer(allMarkers[cat][sub][busId].marker);
+                        });
+                    });
+                } else {
+                    Object.keys(allMarkers[cat]).forEach(busId => {
+                        individualVisibility[busId] = false;
+                        map.removeLayer(allMarkers[cat][busId].marker);
+                    });
+                }
+            });
+            updateControlPanel();
+        }
+
         function fetchBusPositions() {
             // Clear existing markers
-            Object.values(allMarkers).forEach(category => {
-                Object.values(category).forEach(({ marker }) => map.removeLayer(marker));
+            Object.values(allMarkers).forEach(cat => {
+                if (typeof cat === 'object') {
+                    Object.values(cat).forEach(sub => {
+                        Object.values(sub).forEach(({ marker }) => map.removeLayer(marker));
+                    });
+                }
             });
             allMarkers = {};
             routeIdMap = {};
@@ -219,35 +343,33 @@
                 .then(r => r.json())
                 .then(data => {
                     data.forEach(bus => {
-                        const category = getCategory(bus.route_id);
-                        if (!allMarkers[category]) allMarkers[category] = {};
+                        const { parent, sub } = getCategory(bus.route_id);
+                        if (!allMarkers[parent]) allMarkers[parent] = {};
 
-                        const icon = L.divIcon({
-                            className: 'bus-label',
-                            html: `<div>${bus.route_id || 'N/A'}</div>`,
-                            iconSize: [40, 40]
-                        });
-
-                        const marker = L.marker([bus.latitude, bus.longitude], { icon })
-                            .bindPopup(`
-                                <b>Route:</b> ${bus.route_id}<br>
-                                <b>Vehicle:</b> ${bus.vehicle_id}<br>
-                                <b>Updated:</b> ${new Date(bus.timestamp * 1000).toLocaleTimeString()}
-                            `);
-
-                        allMarkers[category][bus.vehicle_id] = { marker, route_id: bus.route_id };
+                        if (sub) {
+                            // Parent category with subcategories
+                            if (!allMarkers[parent][sub]) allMarkers[parent][sub] = {};
+                            const icon = L.divIcon({
+                                className: 'bus-label',
+                                html: `<div>${bus.route_id}</div>`,
+                                iconSize: [30, 18]
+                            });
+                            const marker = L.marker([bus.latitude, bus.longitude], { icon })
+                                .bindPopup(`Route ${bus.route_id} - Vehicle ${bus.vehicle_id}`);
+                            allMarkers[parent][sub][bus.vehicle_id] = { marker };
+                        } else {
+                            // Direct category
+                            if (!allMarkers[parent]) allMarkers[parent] = {};
+                            const icon = L.divIcon({
+                                className: 'bus-label',
+                                html: `<div>${bus.route_id}</div>`,
+                                iconSize: [30, 18]
+                            });
+                            const marker = L.marker([bus.latitude, bus.longitude], { icon })
+                                .bindPopup(`Route ${bus.route_id} - Vehicle ${bus.vehicle_id}`);
+                            allMarkers[parent][bus.vehicle_id] = { marker };
+                        }
                         routeIdMap[bus.vehicle_id] = bus.route_id;
-                    });
-
-                    // Add markers with current visibility
-                    Object.entries(allMarkers).forEach(([category, buses]) => {
-                        categoryVisibility[category] = categoryVisibility[category] !== false;
-                        Object.entries(buses).forEach(([busId, { marker }]) => {
-                            individualVisibility[busId] = individualVisibility[busId] !== false;
-                            if (categoryVisibility[category] && individualVisibility[busId]) {
-                                map.addLayer(marker);
-                            }
-                        });
                     });
 
                     updateControlPanel();
@@ -255,13 +377,11 @@
                 .catch(console.error);
         }
 
-        // Toggle control panel
         document.getElementById("burger").addEventListener("click", () => {
             const panel = document.getElementById("control-panel");
             panel.style.display = panel.style.display === "none" ? "block" : "none";
         });
 
-        // Initial load
         fetchBusPositions();
         setInterval(fetchBusPositions, 15000);
     </script>
