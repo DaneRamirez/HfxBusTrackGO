@@ -1,88 +1,268 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- Set character encoding -->
     <meta charset="UTF-8">
-    <!-- Ensure responsiveness on all devices -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HFX Transit Real-Time Bus Tracker</title>
-    <!-- Include Leaflet's CSS from CDN -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <style>
-        /* Style for the map container to fill the viewport */
         #map {
             height: 100vh;
             width: 100%;
         }
+        #control-panel {
+            position: fixed;
+            top: 50px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            z-index: 1000;
+            max-height: 80vh;
+            overflow-y: auto;
+            width: 280px;
+        }
+        .category-header {
+            cursor: pointer;
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 5px 0;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .bus-list {
+            display: none;
+            margin: 8px 0 12px 15px;
+            border-left: 2px solid #90caf9;
+            padding-left: 10px;
+        }
+        .bus-entry {
+            margin: 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .bus-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: white;
+            background: #2196f3;
+            padding: 4px 8px;
+            border-radius: 12px;
+        }
+        #burger {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: #2196f3;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            z-index: 1100;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        input[type="checkbox"] {
+            transform: scale(1.2);
+            accent-color: #2196f3;
+        }
+        button {
+            background: #2196f3;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
     </style>
 </head>
 <body>
-    <!-- Container for the map -->
+    <button id="burger">☰ Toggle Controls</button>
+    <div id="control-panel"></div>
     <div id="map"></div>
 
-    <!-- Include Leaflet's JavaScript library -->
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
-        // Initialize the map centered on Halifax with a zoom level of 12
         var map = L.map('map').setView([44.65, -63.57], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        // Add OpenStreetMap tile layer as the base layer for the map
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: 'Map data © OpenStreetMap contributors',
-            maxZoom: 19,
-        }).addTo(map);
+        var allMarkers = {};
+        var categoryVisibility = {};
+        var individualVisibility = {};
+        var routeIdMap = {}; // Maps vehicle_id to route_id
 
-        // Function to fetch bus positions from our Flask API endpoint
-        function fetchBusPositions() {
-            // Use the Fetch API to call the endpoint '/api/positions'
-            fetch('/api/positions')
-                .then(response => response.json())  // Parse the JSON response
-                .then(data => {
-                    // Remove any existing markers layer if it exists
-                    if (window.busLayer) {
-                        map.removeLayer(window.busLayer);
+        function getCategory(routeIdStr) {
+            const num = parseInt(routeIdStr);
+            if (isNaN(num)) return "Other";
+            const lower = Math.floor((num - 1) / 50) * 50 + 1;
+            return `${lower}-${lower + 49}`;
+        }
+
+        function updateControlPanel() {
+            const panel = document.getElementById("control-panel");
+            panel.innerHTML = "";
+
+            Object.keys(allMarkers).sort().forEach(category => {
+                const categoryContainer = document.createElement("div");
+                const header = document.createElement("div");
+                header.className = "category-header";
+
+                const categoryCheckbox = document.createElement("input");
+                categoryCheckbox.type = "checkbox";
+                categoryCheckbox.checked = categoryVisibility[category] !== false;
+
+                categoryCheckbox.addEventListener("change", function() {
+                    const visible = this.checked;
+                    categoryVisibility[category] = visible;
+                    Object.keys(allMarkers[category]).forEach(busId => {
+                        individualVisibility[busId] = visible;
+                        const marker = allMarkers[category][busId].marker;
+                        visible ? map.addLayer(marker) : map.removeLayer(marker);
+                    });
+                    updateControlPanel();
+                });
+
+                header.append(categoryCheckbox, `Routes ${category}`);
+
+                header.addEventListener("click", e => {
+                    if (e.target.tagName !== "INPUT") {
+                        const list = header.nextElementSibling;
+                        list.style.display = list.style.display === "block" ? "none" : "block";
                     }
-                    // Create a new layer group to hold bus markers
-                    window.busLayer = L.layerGroup().addTo(map);
+                });
 
-                    // Iterate over each bus object in the fetched data
-                    data.forEach(function(bus) {
-                        // Create a custom DivIcon that displays the bus route id
-                        var busIcon = L.divIcon({
-                            // Set className to an empty string to avoid default marker styles
-                            className: '',
-                            // Use inline HTML and styles for the marker label
-                            html: '<div style="font-size:16px; font-weight:bold; color:black; background:white; padding:4px; border:1px solid black; border-radius:4px;">'
-                                    + (bus.route_id || 'N/A') + '</div>',
-                            // Define the icon size (adjust as needed)
+                const busList = document.createElement("div");
+                busList.className = "bus-list";
+
+                Object.keys(allMarkers[category]).sort().forEach(busId => {
+                    const busContainer = document.createElement("div");
+                    busContainer.className = "bus-entry";
+                    const routeId = routeIdMap[busId] || 'N/A';
+
+                    const busCheckbox = document.createElement("input");
+                    busCheckbox.type = "checkbox";
+                    busCheckbox.checked = individualVisibility[busId] !== false;
+                    busCheckbox.addEventListener("change", function() {
+                        individualVisibility[busId] = this.checked;
+                        const marker = allMarkers[category][busId].marker;
+                        this.checked ? map.addLayer(marker) : map.removeLayer(marker);
+                    });
+
+                    busContainer.append(
+                        busCheckbox,
+                        document.createElement("span").textContent = `Route ${routeId}`
+                    );
+                    busList.appendChild(busContainer);
+                });
+
+                categoryContainer.append(header, busList);
+                panel.appendChild(categoryContainer);
+            });
+
+            // Add control buttons
+            const btnContainer = document.createElement("div");
+            btnContainer.style.marginTop = "15px";
+            btnContainer.style.display = "flex";
+            btnContainer.style.gap = "8px";
+
+            const createButton = (text, action) => {
+                const btn = document.createElement("button");
+                btn.textContent = text;
+                btn.onclick = action;
+                return btn;
+            };
+
+            btnContainer.append(
+                createButton("Show All", () => {
+                    Object.keys(allMarkers).forEach(category => {
+                        categoryVisibility[category] = true;
+                        Object.keys(allMarkers[category]).forEach(busId => {
+                            individualVisibility[busId] = true;
+                            map.addLayer(allMarkers[category][busId].marker);
+                        });
+                    });
+                    updateControlPanel();
+                }),
+                createButton("Hide All", () => {
+                    Object.keys(allMarkers).forEach(category => {
+                        categoryVisibility[category] = false;
+                        Object.keys(allMarkers[category]).forEach(busId => {
+                            individualVisibility[busId] = false;
+                            map.removeLayer(allMarkers[category][busId].marker);
+                        });
+                    });
+                    updateControlPanel();
+                })
+            );
+
+            panel.appendChild(btnContainer);
+        }
+
+        function fetchBusPositions() {
+            // Clear existing markers
+            Object.values(allMarkers).forEach(category => {
+                Object.values(category).forEach(({ marker }) => map.removeLayer(marker));
+            });
+            allMarkers = {};
+            routeIdMap = {};
+
+            fetch('/api/positions')
+                .then(r => r.json())
+                .then(data => {
+                    data.forEach(bus => {
+                        const category = getCategory(bus.route_id);
+                        if (!allMarkers[category]) allMarkers[category] = {};
+
+                        const icon = L.divIcon({
+                            className: 'bus-label',
+                            html: `<div>${bus.route_id || 'N/A'}</div>`,
                             iconSize: [40, 40]
                         });
 
-                        // Create a marker at the bus's latitude and longitude using the custom icon
-                        var marker = L.marker([bus.latitude, bus.longitude], { icon: busIcon });
+                        const marker = L.marker([bus.latitude, bus.longitude], { icon })
+                            .bindPopup(`
+                                <b>Route:</b> ${bus.route_id}<br>
+                                <b>Vehicle:</b> ${bus.vehicle_id}<br>
+                                <b>Updated:</b> ${new Date(bus.timestamp * 1000).toLocaleTimeString()}
+                            `);
 
-                        // Optionally, bind a popup to the marker with detailed bus info
-                        marker.bindPopup(
-                            '<b>Bus ID:</b> ' + bus.vehicle_id + '<br>' +
-                            '<b>Label:</b> ' + bus.vehicle_label + '<br>' +
-                            '<b>Route:</b> ' + (bus.route_id || 'N/A') + '<br>' +
-                            '<b>Timestamp:</b> ' + bus.timestamp + '<br>' +
-                            '<b>Direction:</b> ' + (bus.direction_id || 'N/A') + '<br>' +
-                            '<b>Start Date:</b> ' + (bus.start_date || 'N/A') + '<br>' +
-                            '<b>Speed:</b> ' + (bus.speed ? bus.speed : 'N/A')
-                        );
-
-                        // Add the marker to the busLayer group
-                        window.busLayer.addLayer(marker);
+                        allMarkers[category][bus.vehicle_id] = { marker, route_id: bus.route_id };
+                        routeIdMap[bus.vehicle_id] = bus.route_id;
                     });
+
+                    // Add markers with current visibility
+                    Object.entries(allMarkers).forEach(([category, buses]) => {
+                        categoryVisibility[category] = categoryVisibility[category] !== false;
+                        Object.entries(buses).forEach(([busId, { marker }]) => {
+                            individualVisibility[busId] = individualVisibility[busId] !== false;
+                            if (categoryVisibility[category] && individualVisibility[busId]) {
+                                map.addLayer(marker);
+                            }
+                        });
+                    });
+
+                    updateControlPanel();
                 })
-                .catch(error => console.error('Error fetching bus positions:', error));
+                .catch(console.error);
         }
 
-        // Initially fetch bus positions when the page loads
-        fetchBusPositions();
+        // Toggle control panel
+        document.getElementById("burger").addEventListener("click", () => {
+            const panel = document.getElementById("control-panel");
+            panel.style.display = panel.style.display === "none" ? "block" : "none";
+        });
 
-        // Set an interval to update bus positions every 15 seconds (15000 ms)
+        // Initial load
+        fetchBusPositions();
         setInterval(fetchBusPositions, 15000);
     </script>
 </body>
