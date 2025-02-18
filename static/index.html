@@ -1,61 +1,77 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- Set the character encoding for the document -->
+    <!-- Set character encoding -->
     <meta charset="UTF-8">
-    <!-- Make the web page responsive on all devices -->
+    <!-- Ensure responsiveness on all devices -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- Title of the web page -->
     <title>HFX Transit Real-Time Bus Tracker</title>
-    <!-- Link to Leaflet's CSS for map styling -->
+    <!-- Include Leaflet's CSS from CDN -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <style>
         /* Style for the map container to fill the viewport */
         #map {
-            height: 100vh; /* Full viewport height */
-            width: 100%;   /* Full width */
+            height: 100vh;
+            width: 100%;
         }
     </style>
 </head>
 <body>
-    <!-- Div element that will hold the map -->
+    <!-- Container for the map -->
     <div id="map"></div>
 
     <!-- Include Leaflet's JavaScript library -->
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
-        // Initialize the map centered on Halifax with a starting zoom level of 12
+        // Initialize the map centered on Halifax with a zoom level of 12
         var map = L.map('map').setView([44.65, -63.57], 12);
 
-        // Add the OpenStreetMap tile layer to display the map
+        // Add OpenStreetMap tile layer as the base layer for the map
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: 'Map data © OpenStreetMap contributors',
             maxZoom: 19,
         }).addTo(map);
 
-        // Function to fetch bus positions from the Flask API endpoint
+        // Function to fetch bus positions from our Flask API endpoint
         function fetchBusPositions() {
-            // Use the Fetch API to call the API endpoint (relative URL)
+            // Use the Fetch API to call the endpoint '/api/positions'
             fetch('/api/positions')
-                .then(response => response.json()) // Parse the JSON response
+                .then(response => response.json())  // Parse the JSON response
                 .then(data => {
-                    // Remove existing markers if any (using a global layer group)
+                    // Remove any existing markers layer if it exists
                     if (window.busLayer) {
                         map.removeLayer(window.busLayer);
                     }
-                    // Create a new layer group for bus markers
+                    // Create a new layer group to hold bus markers
                     window.busLayer = L.layerGroup().addTo(map);
 
-                    // Loop through each bus object in the returned data
+                    // Iterate over each bus object in the fetched data
                     data.forEach(function(bus) {
-                        // Create a marker on the map at the bus's latitude and longitude
-                        var marker = L.marker([bus.latitude, bus.longitude]);
-                        // Bind a popup to the marker showing bus information
+                        // Create a custom DivIcon that displays the bus route id
+                        var busIcon = L.divIcon({
+                            // Set className to an empty string to avoid default marker styles
+                            className: '',
+                            // Use inline HTML and styles for the marker label
+                            html: '<div style="font-size:16px; font-weight:bold; color:black; background:white; padding:4px; border:1px solid black; border-radius:4px;">'
+                                    + (bus.route_id || 'N/A') + '</div>',
+                            // Define the icon size (adjust as needed)
+                            iconSize: [40, 40]
+                        });
+
+                        // Create a marker at the bus's latitude and longitude using the custom icon
+                        var marker = L.marker([bus.latitude, bus.longitude], { icon: busIcon });
+
+                        // Optionally, bind a popup to the marker with detailed bus info
                         marker.bindPopup(
                             '<b>Bus ID:</b> ' + bus.vehicle_id + '<br>' +
                             '<b>Label:</b> ' + bus.vehicle_label + '<br>' +
+                            '<b>Route:</b> ' + (bus.route_id || 'N/A') + '<br>' +
+                            '<b>Timestamp:</b> ' + bus.timestamp + '<br>' +
+                            '<b>Direction:</b> ' + (bus.direction_id || 'N/A') + '<br>' +
+                            '<b>Start Date:</b> ' + (bus.start_date || 'N/A') + '<br>' +
                             '<b>Speed:</b> ' + (bus.speed ? bus.speed : 'N/A')
                         );
+
                         // Add the marker to the busLayer group
                         window.busLayer.addLayer(marker);
                     });
@@ -63,11 +79,11 @@
                 .catch(error => console.error('Error fetching bus positions:', error));
         }
 
-        // Fetch bus positions when the page loads
+        // Initially fetch bus positions when the page loads
         fetchBusPositions();
 
-        // Set an interval (every 15 seconds) to update the bus positions in real time
-        setInterval(fetchBusPositions, 15000); // 15000 milliseconds = 15 seconds
+        // Set an interval to update bus positions every 15 seconds (15000 ms)
+        setInterval(fetchBusPositions, 15000);
     </script>
 </body>
 </html>
