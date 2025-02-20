@@ -1,15 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <!-- Set the character encoding -->
     <meta charset="UTF-8">
+    <!-- Ensure responsiveness on mobile devices -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HFX Transit Real-Time Bus Tracker</title>
+    <!-- Include Leaflet's CSS from CDN -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <style>
+        /* Map container fills full viewport */
         #map {
             height: 100vh;
             width: 100%;
         }
+        /* Control panel container styling */
         #control-panel {
             position: fixed;
             top: 50px;
@@ -22,7 +27,9 @@
             max-height: 80vh;
             overflow-y: auto;
             width: 280px;
+            display: none; /* Initially hidden; toggled by burger button */
         }
+        /* Category header style */
         .category-header {
             cursor: pointer;
             background: #f8f9fa;
@@ -35,24 +42,28 @@
             gap: 8px;
             border: 1px solid #dee2e6;
         }
+        /* Subcategory header style */
         .subcategory-header {
             background: #e9ecef;
             margin-left: 15px;
             padding: 6px 10px;
             font-weight: 500;
         }
+        /* Inner bus list container style */
         .bus-list {
-            display: none;
+            display: none; /* Collapsed by default */
             margin: 4px 0 8px 25px;
             border-left: 2px solid #adb5bd;
             padding-left: 8px;
         }
+        /* Style for each bus entry in the control panel */
         .bus-entry {
             margin: 4px 0;
             display: flex;
             align-items: center;
             gap: 8px;
         }
+        /* Custom marker style for bus route labels on the map */
         .bus-label {
             font-size: 12px;
             font-weight: 600;
@@ -67,10 +78,11 @@
             text-align: center;
             box-shadow: 0 1px 2px rgba(0,0,0,0.1);
         }
+        /* Burger button style */
         #burger {
             position: fixed;
             top: 10px;
-            left: 10px;
+            right: 10px;
             background: #2196f3;
             color: white;
             border: none;
@@ -80,10 +92,12 @@
             cursor: pointer;
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
+        /* Checkbox styling */
         input[type="checkbox"] {
             transform: scale(1.1);
             accent-color: #2196f3;
         }
+        /* Global button styling for control panel */
         button {
             background: #2196f3;
             color: white;
@@ -96,25 +110,49 @@
     </style>
 </head>
 <body>
+    <!-- Burger button to toggle the control panel -->
     <button id="burger">☰ Toggle Controls</button>
+    <!-- Control panel container -->
     <div id="control-panel"></div>
+    <!-- Map container -->
     <div id="map"></div>
 
+    <!-- Include Leaflet JS library -->
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
+        /**********************************
+         * Initialize the Leaflet Map     *
+         **********************************/
         const map = L.map('map').setView([44.65, -63.57], 12);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: 'Map data © OpenStreetMap contributors',
+            maxZoom: 19,
+        }).addTo(map);
 
+        /************************************************
+         * Global Variables for Markers and Visibility  *
+         ************************************************/
+        // allMarkers: Stores markers grouped by category.
         let allMarkers = {};
+        // categoryVisibility: Tracks visibility state of each category.
         let categoryVisibility = {};
+        // individualVisibility: Tracks visibility state of each bus (by bus id).
         let individualVisibility = {};
+        // routeIdMap: Maps bus vehicle_id to route_id for sorting and display.
         let routeIdMap = {};
 
-        function getCategory(routeId) {
-            const num = parseInt(routeId);
-            if (isNaN(num)) return "Other";
+        /***************************************
+         * Helper Function: Categorize Bus     *
+         ***************************************/
+        /**
+         * Given a bus route ID as a string, returns an object:
+         *  - parent: main grouping (e.g., "1-50")
+         *  - sub: subcategory if applicable (for 1-50, break into "1-16", "17-32", "33-50")
+         */
+        function getCategory(routeIdStr) {
+            const num = parseInt(routeIdStr);
+            if (isNaN(num)) return { parent: "Other", sub: null };
 
-            // Parent categories
             if (num <= 50) {
                 if (num <= 16) return { parent: "1-50", sub: "1-16" };
                 if (num <= 32) return { parent: "1-50", sub: "17-32" };
@@ -124,38 +162,66 @@
                 if (num <= 75) return { parent: "51-100", sub: "51-75" };
                 return { parent: "51-100", sub: "76-100" };
             }
-
-            // 50-number buckets for 100+
             const lower = Math.floor((num - 1) / 50) * 50 + 1;
             const upper = lower + 49;
             return { parent: `${lower}-${upper}`, sub: null };
         }
 
+        /***********************************************
+         * Function: Add Markers to Map from allMarkers  *
+         ***********************************************/
+        function addMarkers() {
+            // Loop over all categories and add markers based on current visibility state.
+            Object.keys(allMarkers).forEach(category => {
+                // Ensure category visibility is true (reset to default for new data)
+                categoryVisibility[category] = true;
+                // Check if category has subcategories (for 1-50, 51-100)
+                if (["1-50", "51-100"].includes(category) && typeof allMarkers[category] === "object" &&
+                    Object.values(allMarkers[category])[0]?.marker === undefined) {
+                    Object.keys(allMarkers[category]).forEach(sub => {
+                        Object.keys(allMarkers[category][sub]).forEach(busId => {
+                            individualVisibility[busId] = true;
+                            map.addLayer(allMarkers[category][sub][busId].marker);
+                        });
+                    });
+                } else {
+                    Object.keys(allMarkers[category]).forEach(busId => {
+                        individualVisibility[busId] = true;
+                        map.addLayer(allMarkers[category][busId].marker);
+                    });
+                }
+            });
+        }
+
+        /*************************************************
+         * Function: Update Control Panel UI             *
+         *************************************************/
         function updateControlPanel() {
             const panel = document.getElementById("control-panel");
-            panel.innerHTML = "";
+            panel.innerHTML = ""; // Clear existing UI
 
-            // Sort categories numerically
+            // Sort parent categories numerically based on the lower bound of the range.
             const sortedCategories = Object.keys(allMarkers).sort((a, b) => {
-                const numA = parseInt(a.split('-')[0]);
-                const numB = parseInt(b.split('-')[0]);
-                return numA - numB;
+                return parseInt(a.split('-')[0]) - parseInt(b.split('-')[0]);
             });
 
             sortedCategories.forEach(category => {
-                const isParentCategory = ["1-50", "51-100"].includes(category);
+                // Determine if this category should have subcategories.
+                const isParentCategory = (category === "1-50" || category === "51-100");
                 const container = document.createElement("div");
 
-                // Category header
+                // Create category header with a checkbox.
                 const header = document.createElement("div");
                 header.className = "category-header";
 
-                const checkbox = document.createElement("input");
-                checkbox.type = "checkbox";
-                checkbox.checked = categoryVisibility[category] !== false;
-
-                checkbox.addEventListener("change", () => {
-                    const visible = checkbox.checked;
+                const catCheckbox = document.createElement("input");
+                catCheckbox.type = "checkbox";
+                catCheckbox.style.marginRight = "5px";
+                // Always default to true on refresh.
+                catCheckbox.checked = true;
+                categoryVisibility[category] = true;
+                catCheckbox.addEventListener("change", function() {
+                    const visible = this.checked;
                     categoryVisibility[category] = visible;
                     if (isParentCategory) {
                         Object.keys(allMarkers[category]).forEach(sub => {
@@ -163,6 +229,8 @@
                                 individualVisibility[busId] = visible;
                                 const marker = allMarkers[category][sub][busId].marker;
                                 visible ? map.addLayer(marker) : map.removeLayer(marker);
+                                const busCheckbox = document.getElementById("bus-checkbox-" + busId);
+                                if (busCheckbox) busCheckbox.checked = visible;
                             });
                         });
                     } else {
@@ -170,55 +238,61 @@
                             individualVisibility[busId] = visible;
                             const marker = allMarkers[category][busId].marker;
                             visible ? map.addLayer(marker) : map.removeLayer(marker);
+                            const busCheckbox = document.getElementById("bus-checkbox-" + busId);
+                            if (busCheckbox) busCheckbox.checked = visible;
                         });
                     }
                     updateControlPanel();
                 });
+                header.prepend(catCheckbox);
+                header.appendChild(document.createTextNode(" Routes " + category));
 
-                header.append(checkbox, `Routes ${category}`);
+                // Toggle collapse/expand of inner list on header click (exclude checkbox click)
+                header.addEventListener("click", function(e) {
+                    if (e.target.tagName.toLowerCase() !== "input") {
+                        const list = header.nextElementSibling;
+                        list.style.display = (list.style.display === "block") ? "none" : "block";
+                    }
+                });
+                container.appendChild(header);
 
-                if (isParentCategory) {
-                    header.addEventListener("click", e => {
-                        if (e.target.tagName !== "INPUT") {
-                            const list = header.nextElementSibling;
-                            list.style.display = list.style.display === "block" ? "none" : "block";
-                        }
-                    });
-                }
-
+                // Create inner container for individual bus toggles.
                 const content = document.createElement("div");
                 content.className = "bus-list";
+                content.style.display = "block"; // Default expanded on refresh
 
                 if (isParentCategory) {
-                    // Add subcategories
-                    const subCategories = Object.keys(allMarkers[category]).sort((a, b) =>
-                        parseInt(a.split('-')[0]) - parseInt(b.split('-')[0])
-                    );
-
+                    // For parent categories, create subcategory sections.
+                    const subCategories = Object.keys(allMarkers[category]).sort((a, b) => {
+                        return parseInt(a.split('-')[0]) - parseInt(b.split('-')[0]);
+                    });
                     subCategories.forEach(sub => {
                         const subHeader = document.createElement("div");
                         subHeader.className = "subcategory-header";
 
                         const subCheckbox = document.createElement("input");
                         subCheckbox.type = "checkbox";
-                        subCheckbox.checked = Object.keys(allMarkers[category][sub]).some(
-                            busId => individualVisibility[busId] !== false
-                        );
+                        subCheckbox.style.marginRight = "5px";
+                        // Default all subcategories to visible.
+                        subCheckbox.checked = true;
+                        subHeader.appendChild(subCheckbox);
+                        subHeader.appendChild(document.createTextNode(" Routes " + sub));
 
-                        subCheckbox.addEventListener("change", () => {
-                            const visible = subCheckbox.checked;
+                        subCheckbox.addEventListener("change", function() {
+                            const visible = this.checked;
                             Object.keys(allMarkers[category][sub]).forEach(busId => {
                                 individualVisibility[busId] = visible;
                                 const marker = allMarkers[category][sub][busId].marker;
                                 visible ? map.addLayer(marker) : map.removeLayer(marker);
+                                const busCheckbox = document.getElementById("bus-checkbox-" + busId);
+                                if (busCheckbox) busCheckbox.checked = visible;
                             });
                             updateControlPanel();
                         });
 
-                        subHeader.append(subCheckbox, `Routes ${sub}`);
-
                         const busList = document.createElement("div");
                         busList.className = "bus-list";
+                        busList.style.display = "block"; // Default expanded
 
                         Object.keys(allMarkers[category][sub]).sort((a, b) =>
                             parseInt(routeIdMap[a]) - parseInt(routeIdMap[b])
@@ -228,24 +302,29 @@
 
                             const busCheckbox = document.createElement("input");
                             busCheckbox.type = "checkbox";
-                            busCheckbox.checked = individualVisibility[busId] !== false;
-                            busCheckbox.addEventListener("change", () => {
-                                individualVisibility[busId] = busCheckbox.checked;
+                            busCheckbox.id = "bus-checkbox-" + busId;
+                            busCheckbox.style.marginRight = "5px";
+                            busCheckbox.checked = true;
+                            individualVisibility[busId] = true;
+                            busCheckbox.addEventListener("change", function() {
+                                individualVisibility[busId] = this.checked;
                                 const marker = allMarkers[category][sub][busId].marker;
-                                busCheckbox.checked ? map.addLayer(marker) : map.removeLayer(marker);
+                                this.checked ? map.addLayer(marker) : map.removeLayer(marker);
                             });
 
-                            busEntry.append(
-                                busCheckbox,
-                                `Route ${routeIdMap[busId] || 'N/A'}`
-                            );
+                            const busLabel = document.createElement("span");
+                            busLabel.textContent = "Route " + (routeIdMap[busId] || 'N/A');
+
+                            busEntry.appendChild(busCheckbox);
+                            busEntry.appendChild(busLabel);
                             busList.appendChild(busEntry);
                         });
 
-                        content.append(subHeader, busList);
+                        content.appendChild(subHeader);
+                        content.appendChild(busList);
                     });
                 } else {
-                    // Direct buses for non-parent categories
+                    // For categories without subcategories, list individual buses.
                     Object.keys(allMarkers[category]).sort((a, b) =>
                         parseInt(routeIdMap[a]) - parseInt(routeIdMap[b])
                     ).forEach(busId => {
@@ -254,40 +333,43 @@
 
                         const busCheckbox = document.createElement("input");
                         busCheckbox.type = "checkbox";
-                        busCheckbox.checked = individualVisibility[busId] !== false;
-                        busCheckbox.addEventListener("change", () => {
-                            individualVisibility[busId] = busCheckbox.checked;
+                        busCheckbox.id = "bus-checkbox-" + busId;
+                        busCheckbox.style.marginRight = "5px";
+                        busCheckbox.checked = true;
+                        individualVisibility[busId] = true;
+                        busCheckbox.addEventListener("change", function() {
+                            individualVisibility[busId] = this.checked;
                             const marker = allMarkers[category][busId].marker;
-                            busCheckbox.checked ? map.addLayer(marker) : map.removeLayer(marker);
+                            this.checked ? map.addLayer(marker) : map.removeLayer(marker);
                         });
 
-                        busEntry.append(
-                            busCheckbox,
-                            `Route ${routeIdMap[busId] || 'N/A'}`
-                        );
+                        const busLabel = document.createElement("span");
+                        busLabel.textContent = "Route " + (routeIdMap[busId] || 'N/A');
+
+                        busEntry.appendChild(busCheckbox);
+                        busEntry.appendChild(busLabel);
                         content.appendChild(busEntry);
                     });
                 }
 
-                container.append(header, content);
+                container.appendChild(content);
                 panel.appendChild(container);
             });
 
-            // Control buttons
+            // Add global "Show All" and "Hide All" buttons.
             const btnContainer = document.createElement("div");
             btnContainer.style.marginTop = "15px";
             btnContainer.style.display = "flex";
             btnContainer.style.gap = "8px";
-
-            btnContainer.innerHTML = `
-                <button onclick="showAll()">Show All</button>
-                <button onclick="hideAll()">Hide All</button>
-            `;
-
+            btnContainer.innerHTML = `<button onclick="showAll()">Show All</button><button onclick="hideAll()">Hide All</button>`;
             panel.appendChild(btnContainer);
         }
 
+        /***************************************
+         * Global Functions: Show All & Hide All *
+         ***************************************/
         function showAll() {
+            // Reset all categories and individual markers to visible
             Object.keys(allMarkers).forEach(cat => {
                 categoryVisibility[cat] = true;
                 if (["1-50", "51-100"].includes(cat)) {
@@ -308,6 +390,7 @@
         }
 
         function hideAll() {
+            // Set all categories and individual markers to hidden
             Object.keys(allMarkers).forEach(cat => {
                 categoryVisibility[cat] = false;
                 if (["1-50", "51-100"].includes(cat)) {
@@ -327,63 +410,103 @@
             updateControlPanel();
         }
 
+        /********************************************
+         * Fetch Bus Positions and Update Markers   *
+         ********************************************/
         function fetchBusPositions() {
-            // Clear existing markers
-            Object.values(allMarkers).forEach(cat => {
-                if (typeof cat === 'object') {
-                    Object.values(cat).forEach(sub => {
-                        Object.values(sub).forEach(({ marker }) => map.removeLayer(marker));
-                    });
+            // Remove all current markers from the map
+            for (const category in allMarkers) {
+                if (allMarkers.hasOwnProperty(category)) {
+                    const cat = allMarkers[category];
+                    if (typeof cat === 'object' && Object.values(cat)[0]?.marker === undefined) {
+                        // Category has subcategories
+                        Object.keys(cat).forEach(sub => {
+                            Object.keys(cat[sub]).forEach(busId => {
+                                const marker = cat[sub][busId].marker;
+                                if (map.hasLayer(marker)) map.removeLayer(marker);
+                            });
+                        });
+                    } else {
+                        // Category without subcategories
+                        Object.keys(cat).forEach(busId => {
+                            const marker = cat[busId].marker;
+                            if (map.hasLayer(marker)) map.removeLayer(marker);
+                        });
+                    }
                 }
-            });
+            }
+            // Clear global markers and route mapping for fresh data
             allMarkers = {};
             routeIdMap = {};
 
+            // Fetch new bus position data from the API endpoint
             fetch('/api/positions')
-                .then(r => r.json())
+                .then(response => response.json())
                 .then(data => {
                     data.forEach(bus => {
-                        const { parent, sub } = getCategory(bus.route_id);
+                        const { parent, sub } = getCategory(bus.route_id || "");
                         if (!allMarkers[parent]) allMarkers[parent] = {};
-
                         if (sub) {
-                            // Parent category with subcategories
                             if (!allMarkers[parent][sub]) allMarkers[parent][sub] = {};
                             const icon = L.divIcon({
-                                className: 'bus-label',
-                                html: `<div>${bus.route_id}</div>`,
+                                className: '',
+                                html: `<div class="bus-label">${bus.route_id || 'N/A'}</div>`,
                                 iconSize: [30, 18]
                             });
                             const marker = L.marker([bus.latitude, bus.longitude], { icon })
                                 .bindPopup(`Route ${bus.route_id} - Vehicle ${bus.vehicle_id}`);
                             allMarkers[parent][sub][bus.vehicle_id] = { marker };
                         } else {
-                            // Direct category
                             if (!allMarkers[parent]) allMarkers[parent] = {};
                             const icon = L.divIcon({
-                                className: 'bus-label',
-                                html: `<div>${bus.route_id}</div>`,
+                                className: '',
+                                html: `<div class="bus-label">${bus.route_id || 'N/A'}</div>`,
                                 iconSize: [30, 18]
                             });
                             const marker = L.marker([bus.latitude, bus.longitude], { icon })
                                 .bindPopup(`Route ${bus.route_id} - Vehicle ${bus.vehicle_id}`);
                             allMarkers[parent][bus.vehicle_id] = { marker };
                         }
+                        // Save the mapping for sorting in the control panel.
                         routeIdMap[bus.vehicle_id] = bus.route_id;
                     });
 
+                    // Reset visibility for all new markers to true on refresh.
+                    Object.keys(allMarkers).forEach(cat => {
+                        categoryVisibility[cat] = true;
+                        if (["1-50", "51-100"].includes(cat)) {
+                            Object.keys(allMarkers[cat]).forEach(sub => {
+                                Object.keys(allMarkers[cat][sub]).forEach(busId => {
+                                    individualVisibility[busId] = true;
+                                });
+                            });
+                        } else {
+                            Object.keys(allMarkers[cat]).forEach(busId => {
+                                individualVisibility[busId] = true;
+                            });
+                        }
+                    });
+
+                    // Add new markers to the map
+                    addMarkers();
+                    // Rebuild the control panel UI
                     updateControlPanel();
                 })
                 .catch(console.error);
         }
 
+        /**************************************
+         * Burger Menu: Toggle Control Panel  *
+         **************************************/
         document.getElementById("burger").addEventListener("click", () => {
             const panel = document.getElementById("control-panel");
-            panel.style.display = panel.style.display === "none" ? "block" : "none";
+            panel.style.display = (panel.style.display === "block") ? "none" : "block";
         });
 
+        // Initial fetch of bus positions when the page loads.
         fetchBusPositions();
-        setInterval(fetchBusPositions, 15000);
+        // Refresh bus positions every 5 seconds.
+        setInterval(fetchBusPositions, 5000);
     </script>
 </body>
 </html>
